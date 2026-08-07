@@ -27,3 +27,8 @@ build/
 
 # Workshop export (source of truth lives in Google Docs)
 WarpStream Tableflow Workshop.md
+
+# Agent handoff / session memory (local only)
+SESSION_MEMORY.md
+.session-memory.md
+.agent-memory/

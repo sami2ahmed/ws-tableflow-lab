@@ -446,3 +446,105 @@ LIMIT 8;
 ```
 
 No table rebuild and no downtime — Tableflow migrates the Iceberg schema automatically.
+
+## Key takeaways
+
+- **One config, multiple topics**: a single Tableflow YAML replaces separate Kafka Connect + S3 sink + Spark compaction pipelines per topic
+- **Protobuf-native**: raw protobuf wire format works without a schema registry; inline `input_schema` maps proto fields to Iceberg columns
+- **Schema evolution without downtime**: add fields via the Pipeline API; old rows return `null` for new columns
+- **Zero operational overhead**: compaction, snapshot cleanup, orphan file cleanup, and retention run in the background
+
+## Cleanup
+
+The pipeline must be paused before tables (and then the pipeline) can be deleted:
+
+```bash
+set -a && source .env && set +a
+./scripts/cleanup.sh
+```
+
+`cleanup.sh` will:
+
+1. Pause the `data_lake` pipeline
+2. Delete each Tableflow table via `POST /api/v1/dl/delete_table`
+3. Delete the pipeline via `POST /api/v1/delete_pipeline`
+4. Remove `/tmp/warpstream-tableflow-iceberg`
+5. Clear `PIPELINE_ID` / `CONFIG_ID` in `.env`
+
+Manual equivalent:
+
+```bash
+# Pause (required before deleting tables / pipeline)
+curl -s -X POST "${BASE_URL}/api/v1/change_pipeline_state" \
+  -H "Content-Type: application/json" \
+  -H "warpstream-api-key: ${API_KEY}" \
+  -d "{
+    \"virtual_cluster_id\":\"${VIRTUAL_CLUSTER_ID}\",
+    \"pipeline_id\":\"${PIPELINE_ID}\",
+    \"desired_state\":\"paused\"
+  }" | jq .
+
+# List + delete tables (required before pipeline delete)
+curl -s -X POST "${BASE_URL}/api/v1/dl/list_tables" \
+  -H "Content-Type: application/json" \
+  -H "warpstream-api-key: ${API_KEY}" \
+  -d "{\"virtual_cluster_id\":\"${VIRTUAL_CLUSTER_ID}\"}" | jq .
+
+# For each table_uuid:
+curl -s -X POST "${BASE_URL}/api/v1/dl/delete_table" \
+  -H "Content-Type: application/json" \
+  -H "warpstream-api-key: ${API_KEY}" \
+  -d "{
+    \"virtual_cluster_id\":\"${VIRTUAL_CLUSTER_ID}\",
+    \"table_uuid\":\"${TABLE_UUID}\"
+  }" | jq .
+
+# Delete pipeline
+curl -s -X POST "${BASE_URL}/api/v1/delete_pipeline" \
+  -H "Content-Type: application/json" \
+  -H "warpstream-api-key: ${API_KEY}" \
+  -d "{
+    \"virtual_cluster_id\":\"${VIRTUAL_CLUSTER_ID}\",
+    \"pipeline_id\":\"${PIPELINE_ID}\"
+  }" | jq .
+
+# Remove local data
+rm -rf /tmp/warpstream-tableflow-iceberg
+```
+
+Stop `warpstream playground` with Ctrl+C when finished.
+
+## Appendix: supported schema migrations (Protobuf)
+
+| Migration | Supported | Notes |
+| :---- | :---- | :---- |
+| Add new field | Yes | New Iceberg column; existing rows return `null` |
+| Make required field optional | Yes | Safe |
+| Widen numeric type (`int32` → `int64`) | Yes | Iceberg column type widens |
+| Add new enum value | Yes | Stored as string name |
+| Remove field | No | Drop and recreate table |
+| Rename enum value | No | Would make old/new rows inconsistent |
+| Change field type (non-widening) | No | Drop and recreate table |
+
+Deploy schema changes **before** producing data with the new schema. Unknown fields are skipped or halt ingestion depending on `dlq_mode` (`skip` / `stop`).
+
+## Appendix: Pipeline API quick reference
+
+| Operation | Endpoint | Key fields |
+| :---- | :---- | :---- |
+| List Pipelines | `POST /api/v1/list_pipelines` | `virtual_cluster_id` |
+| Create Pipeline | `POST /api/v1/create_pipeline` | `pipeline_name`, `pipeline_type: "data_lake"` |
+| Create Configuration | `POST /api/v1/create_pipeline_configuration` | `pipeline_id`, `configuration_yaml` |
+| Change State | `POST /api/v1/change_pipeline_state` | `desired_state`, `deployed_configuration_id` |
+| Describe Pipeline | `POST /api/v1/describe_pipeline` | `pipeline_id` |
+| Delete Pipeline | `POST /api/v1/delete_pipeline` | `pipeline_id` (pause first; delete tables first) |
+| List Tables | `POST /api/v1/dl/list_tables` | `virtual_cluster_id` |
+| Delete Table | `POST /api/v1/dl/delete_table` | `table_uuid` |
+
+## References
+
+- [Tableflow GA Announcement](https://www.warpstream.com/blog/warpstream-tableflow-is-now-generally-available)
+- [Tableflow Configuration Docs](https://docs.warpstream.com/warpstream/tableflow/tableflow)
+- [Query Engine & Catalog Integrations](https://docs.warpstream.com/warpstream/tableflow/catalogs-and-query-engines)
+- [Iceberg REST Catalog](https://docs.warpstream.com/warpstream/tableflow/iceberg-catalog)
+- [Protobuf with Schema Registry and Tableflow](https://www.warpstream.com/blog/going-all-in-on-protobuf-with-schema-registry-and-tableflow)
