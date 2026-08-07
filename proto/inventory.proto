@@ -1,0 +1,11 @@
+syntax = "proto3";
+package ecommerce;
+
+message InventoryUpdate {
+  string sku = 1;
+  string warehouse_id = 2;
+  int32  quantity_change = 3;   // positive = restock, negative = sold
+  int32  quantity_after = 4;
+  string update_type = 5;      // "sale", "restock", "adjustment"
+  int64  updated_at_ms = 6;
+}

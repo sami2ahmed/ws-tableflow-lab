@@ -1,0 +1,14 @@
+syntax = "proto3";
+package ecommerce;
+
+message OrderEvent {
+  string order_id = 1;
+  string customer_id = 2;
+  string status = 3;           // "created", "confirmed", "shipped", "delivered"
+  double total_amount = 4;
+  string currency = 5;
+  string payment_method = 6;
+  int32  item_count = 7;
+  int64  created_at_ms = 8;
+  string discount_code = 9;    // optional; used with --with-discount
+}

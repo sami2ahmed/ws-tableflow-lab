@@ -1,0 +1,12 @@
+syntax = "proto3";
+package ecommerce;
+
+message ClickEvent {
+  string event_id = 1;
+  string user_id = 2;
+  string session_id = 3;
+  string page_url = 4;
+  string event_type = 5;       // "page_view", "click", "scroll"
+  string referrer = 6;
+  int64  timestamp_ms = 7;
+}
