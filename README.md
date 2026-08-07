@@ -309,3 +309,73 @@ INVENTORY_TABLE=$(ls -d /tmp/warpstream-tableflow-iceberg/warpstream/_tableflow/
 find /tmp/warpstream-tableflow-iceberg -name "*.parquet" | wc -l
 duckdb -c "SELECT * FROM read_parquet('$ORDERS_TABLE/data/*.parquet') LIMIT 5;"
 ```
+
+Example from this session: tables under `/tmp/warpstream-tableflow-iceberg/warpstream/_tableflow/`, Parquet files present, and Iceberg `v*.metadata.json` available within a few minutes.
+
+```bash
+find /tmp/warpstream-tableflow-iceberg -name "v*.metadata.json"
+```
+
+## Query Iceberg tables with DuckDB
+
+Once metadata exists, set the table path variables (from above) and run:
+
+```bash
+export PATH="$HOME/.duckdb/cli/latest:$PATH"
+# CLICKS_TABLE / ORDERS_TABLE / INVENTORY_TABLE already set
+
+duckdb -c "
+LOAD iceberg;
+SELECT 'clickstream' AS tbl, COUNT(*) AS rows FROM iceberg_scan('$CLICKS_TABLE')
+UNION ALL SELECT 'orders', COUNT(*) FROM iceberg_scan('$ORDERS_TABLE')
+UNION ALL SELECT 'inventory', COUNT(*) FROM iceberg_scan('$INVENTORY_TABLE');
+"
+```
+
+Expected shape (counts grow as you keep producing):
+
+```
+┌─────────────┬───────┐
+│     tbl     │ rows  │
+├─────────────┼───────┤
+│ clickstream │   400 │
+│ orders      │   400 │
+│ inventory   │   400 │
+└─────────────┴───────┘
+```
+
+Revenue by payment method:
+
+```bash
+duckdb -c "
+LOAD iceberg;
+SELECT payment_method, COUNT(*) AS order_count,
+    ROUND(SUM(total_amount), 2) AS total_revenue,
+    ROUND(AVG(total_amount), 2) AS avg_order_value
+FROM iceberg_scan('$ORDERS_TABLE')
+GROUP BY payment_method
+ORDER BY total_revenue DESC;
+"
+```
+
+Example result:
+
+```
+┌────────────────┬─────────────┬───────────────┬─────────────────┐
+│ payment_method │ order_count │ total_revenue │ avg_order_value │
+├────────────────┼─────────────┼───────────────┼─────────────────┤
+│ paypal         │         107 │      27554.87 │          257.52 │
+│ card           │         102 │       25428.3 │           249.3 │
+│ bank_transfer  │         100 │      24929.09 │          249.29 │
+│ apple_pay      │          91 │      21169.09 │          232.63 │
+└────────────────┴─────────────┴───────────────┴─────────────────┘
+```
+
+More queries (attribution join, inventory snapshot, unified customer view) live in `scripts/queries.sql`. Open that file in the DuckDB UI or paste into an interactive `duckdb` session after `LOAD iceberg;`.
+
+```bash
+# Refresh paths if your table UUIDs differ
+ls /tmp/warpstream-tableflow-iceberg/warpstream/_tableflow/
+```
+
+Note: `produce-protobuf.py` uses the same `user-*` ID space for clickstream `user_id` and orders `customer_id` so the attribution join can match.

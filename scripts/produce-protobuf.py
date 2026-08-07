@@ -39,7 +39,7 @@ def now_ms() -> int:
 def make_click() -> bytes:
     msg = ClickEvent(
         event_id=str(uuid.uuid4()),
-        user_id=f"user-{random.randint(1, 500)}",
+        user_id=f"user-{random.randint(1, 200)}",
         session_id=str(uuid.uuid4()),
         page_url=random.choice(PAGES),
         event_type=random.choice(EVENT_TYPES),
@@ -52,7 +52,8 @@ def make_click() -> bytes:
 def make_order(*, with_discount: bool) -> bytes:
     msg = OrderEvent(
         order_id=str(uuid.uuid4()),
-        customer_id=f"cust-{random.randint(1, 200)}",
+        # Same ID space as clickstream.user_id so attribution joins work.
+        customer_id=f"user-{random.randint(1, 200)}",
         status=random.choice(STATUSES),
         total_amount=round(random.uniform(5.0, 500.0), 2),
         currency="USD",
