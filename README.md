@@ -379,3 +379,70 @@ ls /tmp/warpstream-tableflow-iceberg/warpstream/_tableflow/
 ```
 
 Note: `produce-protobuf.py` uses the same `user-*` ID space for clickstream `user_id` and orders `customer_id` so the attribution join can match.
+
+## Schema evolution: add `discount_code`
+
+Add an optional `discount_code` field (protobuf field 9) to the orders table without rebuilding existing data.
+
+```bash
+set -a && source .env && set +a
+./scripts/evolve-schema.sh
+```
+
+The script pauses the pipeline, deploys a new config (orders `input_schema` includes `string discount_code = 9`), resumes with that config, and updates `CONFIG_ID` in `.env`.
+
+Then produce events that include the new field:
+
+```bash
+python scripts/produce-protobuf.py --broker localhost:9092 --count 50 --with-discount
+```
+
+Parquet files pick up `discount_code` within seconds. Iceberg metadata may lag a bit — wait for a new `v*.metadata.json` / `version-hint.text` bump, then query:
+
+```bash
+ORDERS_TABLE=$(ls -d /tmp/warpstream-tableflow-iceberg/warpstream/_tableflow/ecommerce_kafka__orders-*)
+
+duckdb -c "
+LOAD iceberg;
+SELECT
+  COUNT(*) AS total_orders,
+  COUNT(discount_code) AS with_discount,
+  COUNT(*) - COUNT(discount_code) AS null_discount
+FROM iceberg_scan('$ORDERS_TABLE');
+"
+```
+
+Example after evolution + a small produce batch:
+
+```
+┌──────────────┬───────────────┬───────────────┐
+│ total_orders │ with_discount │ null_discount │
+├──────────────┼───────────────┼───────────────┤
+│          580 │            30 │           550 │
+└──────────────┴───────────────┴───────────────┘
+```
+
+Older rows stay `NULL`; newer rows have values:
+
+```bash
+duckdb -c "
+LOAD iceberg;
+SELECT order_id, customer_id, total_amount, discount_code
+FROM iceberg_scan('$ORDERS_TABLE')
+ORDER BY created_at_ms DESC
+LIMIT 8;
+"
+```
+
+```
+┌──────────────────────────────────────┬─────────────┬──────────────┬───────────────┐
+│               order_id               │ customer_id │ total_amount │ discount_code │
+├──────────────────────────────────────┼─────────────┼──────────────┼───────────────┤
+│ 4de344a0-2f2b-455d-b64c-20d6469ab873 │ user-36     │       229.08 │ FREESHIP      │
+│ 0c7cdf71-c827-49aa-bd93-79a2140a282a │ user-126    │       314.94 │ WELCOME20     │
+│ 06025d54-876b-40be-abba-6fe02d5bd9ec │ user-87     │       177.44 │ WELCOME20     │
+│ ...                                  │ ...         │         ... │ ...           │
+└──────────────────────────────────────┴──────────────┴──────────────┴───────────────┘
+```
+
+No table rebuild and no downtime — Tableflow migrates the Iceberg schema automatically.

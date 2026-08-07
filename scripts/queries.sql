@@ -75,3 +75,15 @@ FROM clicks c
 FULL OUTER JOIN purchases p ON c.user_id = p.user_id
 ORDER BY total_spent DESC
 LIMIT 15;
+
+-- Schema evolution check: discount_code (NULL on older rows)
+SELECT
+  COUNT(*) AS total_orders,
+  COUNT(discount_code) AS with_discount,
+  COUNT(*) - COUNT(discount_code) AS null_discount
+FROM iceberg_scan('/tmp/warpstream-tableflow-iceberg/warpstream/_tableflow/ecommerce_kafka__orders-a0a2a76f-74a7-4e21-a233-ba72f9038039');
+
+SELECT order_id, customer_id, total_amount, discount_code
+FROM iceberg_scan('/tmp/warpstream-tableflow-iceberg/warpstream/_tableflow/ecommerce_kafka__orders-a0a2a76f-74a7-4e21-a233-ba72f9038039')
+ORDER BY created_at_ms DESC
+LIMIT 10;
