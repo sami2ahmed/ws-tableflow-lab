@@ -334,21 +334,12 @@ UNION ALL SELECT 'inventory', COUNT(*) FROM iceberg_scan('$INVENTORY_TABLE');
 # 5) Evolve orders schema (adds discount_code = 9), then produce WITH discount
 ./scripts/evolve-schema.sh
 python scripts/produce-protobuf.py --broker localhost:9092 --count 50 --with-discount
-# wait for new Parquet, then for Iceberg metadata bump (often ~1-2+ minutes)
-# optional extra batch if discount_code is still all NULL in iceberg_scan:
-# python scripts/produce-protobuf.py --broker localhost:9092 --count 30 --with-discount
-
-duckdb -c "
-LOAD iceberg;
-SELECT
-  COUNT(*) AS total_orders,
-  COUNT(discount_code) AS with_discount,
-  COUNT(*) - COUNT(discount_code) AS null_discount
-FROM iceberg_scan('$ORDERS_TABLE');
-"
+# Column can appear in iceberg_scan while with_discount is still 0.
+# Non-null values often take ~3–8 minutes on playground (sometimes longer).
+./scripts/poll-discount.sh
 ```
 
-After `--count 200` then `--count 50 --with-discount`, expect roughly 250 orders with some non-null `discount_code` once metadata catches up. Older illustrative session numbers (e.g. 400/400/400 or 580/30/550) came from multi-batch runs — treat them as examples, not guarantees for a clean run.
+After `--count 200` then `--count 50 --with-discount`, expect roughly 250+ orders with a non-zero `with_discount` once metadata catches up. Older illustrative session numbers (e.g. 400/400/400 or 580/30/550) came from multi-batch runs — treat them as examples, not guarantees for a clean run.
 
 ## Produce protobuf events
 
@@ -531,13 +522,20 @@ Then produce events that include the new field:
 python scripts/produce-protobuf.py --broker localhost:9092 --count 50 --with-discount
 ```
 
-What to expect:
+What to expect (playground timing from a clean run):
 
-1. New Parquet files show `discount_code` within seconds (`DESCRIBE SELECT * FROM read_parquet(...)`).
-2. `iceberg_scan` may still show all-NULL for a while — Iceberg metadata lags Parquet.
-3. If needed, produce another `--count 30 --with-discount` batch and poll `version-hint.text` / `v*.metadata.json` every ~20s until non-nulls appear (~1-2+ minutes after the new Parquet).
+1. **Parquet** usually shows `discount_code` within **seconds** (`DESCRIBE SELECT * FROM read_parquet(...)`).
+2. **`iceberg_scan` schema** may add the column in about **1–2 minutes**, while `with_discount` is still **0** (all NULL). That is normal — the column landing ≠ non-null values landing.
+3. **Non-null `discount_code` values** in `iceberg_scan` often take about **3–8 minutes** after the `--with-discount` produce (sometimes longer on a busy playground). If it stays all NULL past ~4 minutes, an extra `--count 30 --with-discount` batch helps; `poll-discount.sh` does that automatically around attempt 12.
 
-Poll helper:
+Poll with the helper (preferred):
+
+```bash
+export PATH="$HOME/.duckdb/cli/latest:$PATH"
+./scripts/poll-discount.sh
+```
+
+Or manually:
 
 ```bash
 export PATH="$HOME/.duckdb/cli/latest:$PATH"
@@ -555,7 +553,7 @@ FROM iceberg_scan('$ORDERS_TABLE');
 "
 ```
 
-On a clean run (`200` without discount + `50` with), expect something like ~250 total orders with a non-zero `with_discount` once metadata catches up. A prior multi-batch session landed at 580 / 30 / 550 — illustrative only, not a target.
+On a clean run (`200` without discount + `50` with, plus optional `+30`), expect something like ~250–280 total orders with a non-zero `with_discount` once metadata catches up. A prior multi-batch session landed at 580 / 30 / 550 — illustrative only, not a target.
 
 Older rows stay `NULL`; newer rows have values:
 
