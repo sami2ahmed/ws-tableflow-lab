@@ -13,7 +13,7 @@ Local tooling and workshop notes for WarpStream Tableflow: Kafka topics material
 - **BYOC deployment**: agents run in your VPC; data stays in your object storage bucket
 - Integrates with **BigQuery, Databricks, Snowflake, AWS Glue, DuckDB, ClickHouse, Trino, Athena**
 
-Tableflow overview
+![Tableflow overview](assets/tableflow-overview.png)
 
 Tableflow handles the entire lifecycle — ingestion, schema evolution, partitioning, compaction, and retention — in a single declarative YAML configuration.
 
@@ -76,9 +76,28 @@ Three topics model distinct layers of an e-commerce data platform:
 | `inventory_updates` | Stock level changes per SKU/warehouse      | Low volume, operational          |
 
 
-All topics use **protobuf** with `wire_format: raw` (no schema registry required). Tableflow ingests them into Iceberg tables partitioned by hour.
+All topics use **protobuf** with `wire_format: raw` (no schema registry required). Tableflow ingests `clickstream` and `orders` into Iceberg tables partitioned by hour; `inventory_updates` is unpartitioned (matches `scripts/configure-tableflow.sh`).
+
+## Lab steps (do these)
+
+Work through the numbered setup sections, then the end-to-end path. In short:
+
+1. Get the repo and install tooling (Python, DuckDB, WarpStream CLI, `kcat`, `jq`)
+2. Start `warpstream playground`, open the console, fill `.env`
+3. Clear/create the local Iceberg dir, produce events (no discount yet)
+4. Configure Tableflow → wait for Parquet + Iceberg metadata → query with DuckDB
+5. Evolve the orders schema → produce with `--with-discount` → query again
+
+Deep product overview lives above; cleanup and API appendices live at the bottom. Jump to **End-to-end path** once the checklist is green.
 
 ## Prerequisites
+
+Clone the lab (branch `dev`):
+
+```bash
+git clone -b dev https://github.com/sami2ahmed/ws-tableflow-lab.git
+cd ws-tableflow-lab
+```
 
 You need:
 
@@ -131,9 +150,10 @@ echo 'export PATH="$HOME/.duckdb/cli/latest:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-Verify:
+Verify (in a new shell, re-export PATH if needed):
 
 ```bash
+export PATH="$HOME/.duckdb/cli/latest:$PATH"
 duckdb --version
 ```
 
@@ -182,37 +202,9 @@ apt-get install jq
 
 
 
-## 6. Environment variables
+## 6. Start WarpStream Playground
 
-Copy the example env file and fill in secrets from the WarpStream console (after playground is running — see next section):
-
-```bash
-cp .env.example .env
-```
-
-`.env` fields:
-
-
-| Variable                    | Value                                                                                           |
-| --------------------------- | ----------------------------------------------------------------------------------------------- |
-| `BASE_URL`                  | `https://api.warpstream.com`                                                                    |
-| `API_KEY`                   | Console → API Keys (create one if needed)                                                       |
-| `VIRTUAL_CLUSTER_ID`        | The **Tableflow** cluster id, looks like `vci_dl_...` (not the Kafka `vci_...` default cluster) |
-| `BROKER`                    | `localhost:9092` (playground Kafka port)                                                        |
-| `PIPELINE_ID` / `CONFIG_ID` | Leave blank; `configure-tableflow.sh` writes them                                               |
-
-
-Load them into your shell:
-
-```bash
-set -a && source .env && set +a
-```
-
-`.env` is gitignored. Do not commit real keys.
-
-## 7. Start WarpStream Playground
-
-Keep this process running in a dedicated terminal:
+Keep this process running in a dedicated terminal (do this before filling `.env`):
 
 ```bash
 warpstream playground
@@ -242,44 +234,81 @@ Ports:
         internal HTTP port: 8081 (override using -tableflowInternalHTTPPort)
 ```
 
-Open the console URL from the output, then set `API_KEY` and the Tableflow `VIRTUAL_CLUSTER_ID` (`vci_dl_...`) in `.env` and reload env vars as in step 6.
+**Console URL quirk:** if the printed URL starts with `https:/` (one slash), fix it to `https://` before opening.
+
+Open that URL, then continue to section 7 for `.env`.
 
 If produce later fails with clock-sync / heartbeat errors in the playground logs, stop playground (Ctrl+C) and start it again.
 
-## 8. Local Iceberg output directory
+## 7. Environment variables
+
+With playground running and the console open:
 
 ```bash
-mkdir -p /tmp/warpstream-tableflow-iceberg
+cp .env.example .env
+```
+
+Fill these from the console:
+
+
+| Variable                    | Value                                                                                           |
+| --------------------------- | ----------------------------------------------------------------------------------------------- |
+| `BASE_URL`                  | `https://api.warpstream.com`                                                                    |
+| `API_KEY`                   | Console → **API Keys** → create a key (`aks_...`)                                               |
+| `VIRTUAL_CLUSTER_ID`        | The **Tableflow** cluster id (`vci_dl_...`)                                                     |
+| `BROKER`                    | `localhost:9092` (playground Kafka port)                                                        |
+| `PIPELINE_ID` / `CONFIG_ID` | Leave blank; `configure-tableflow.sh` writes them                                               |
+
+
+Do not confuse these:
+
+- `warpstream_session_key=sks_...` in the playground URL is a **session login**, not an API key. Create a real API key under Console → API Keys (`aks_...`).
+- The console landing URL often opens the **Kafka** cluster (`vci_...`). For `VIRTUAL_CLUSTER_ID`, switch to the **Tableflow** cluster (`vci_dl_...`) via the Virtual Clusters list / switcher.
+
+Load them into your shell:
+
+```bash
+set -a && source .env && set +a
+```
+
+`.env` is gitignored. Do not commit real keys.
+
+## 8. Local Iceberg output directory
+
+Start each lab run with a clean local dir (stale empty table folders from prior runs confuse later `ls` / path picks):
+
+```bash
+rm -rf /tmp/warpstream-tableflow-iceberg && mkdir -p /tmp/warpstream-tableflow-iceberg
 ```
 
 
 
 ## Setup checklist
 
-- [ ] `.venv` created and `pip install -r requirements.txt` succeeded
-- [ ] `duckdb --version` works and `INSTALL iceberg` succeeded
+- [ ] Repo cloned (`dev` branch) and `.venv` + `pip install -r requirements.txt` succeeded
+- [ ] `duckdb --version` works (`export PATH="$HOME/.duckdb/cli/latest:$PATH"` if needed) and `INSTALL iceberg` succeeded
 - [ ] `warpstream` CLI installed
 - [ ] `kcat` and `jq` installed
 - [ ] `warpstream playground` running (ports 9092 / 9094 / 8081)
-- [ ] `.env` filled with `API_KEY` and Tableflow `VIRTUAL_CLUSTER_ID` (`vci_dl_...`)
-- [ ] `/tmp/warpstream-tableflow-iceberg` exists
+- [ ] `.env` filled with API key (`aks_...`) and Tableflow `VIRTUAL_CLUSTER_ID` (`vci_dl_...`)
+- [ ] `/tmp/warpstream-tableflow-iceberg` wiped and recreated for this run
 
 
 
-## End-to-end path (exact commands from this session)
+## End-to-end path (exact commands)
 
 With playground already running in another terminal, tooling installed, and `.env` filled:
 
 ```bash
-cd /path/to/elevate-2026
+cd /path/to/ws-tableflow-lab
 source .venv/bin/activate
 set -a && source .env && set +a
 export PATH="$HOME/.duckdb/cli/latest:$PATH"
 
-mkdir -p /tmp/warpstream-tableflow-iceberg
+rm -rf /tmp/warpstream-tableflow-iceberg && mkdir -p /tmp/warpstream-tableflow-iceberg
 
-# 1) Seed Kafka topics (200 msgs × 3 topics)
-python scripts/produce-protobuf.py --broker localhost:9092 --count 200 --with-discount
+# 1) Seed Kafka topics (200 msgs × 3 topics) — no discount yet
+python scripts/produce-protobuf.py --broker localhost:9092 --count 200
 
 # 2) Create/reuse Tableflow pipeline + deploy YAML + start it
 ./scripts/configure-tableflow.sh
@@ -302,10 +331,10 @@ UNION ALL SELECT 'orders', COUNT(*) FROM iceberg_scan('$ORDERS_TABLE')
 UNION ALL SELECT 'inventory', COUNT(*) FROM iceberg_scan('$INVENTORY_TABLE');
 "
 
-# 5) Evolve orders schema (adds discount_code = 9), then produce more
+# 5) Evolve orders schema (adds discount_code = 9), then produce WITH discount
 ./scripts/evolve-schema.sh
 python scripts/produce-protobuf.py --broker localhost:9092 --count 50 --with-discount
-# wait for new Parquet, then for Iceberg metadata bump (we needed ~1-2+ minutes)
+# wait for new Parquet, then for Iceberg metadata bump (often ~1-2+ minutes)
 # optional extra batch if discount_code is still all NULL in iceberg_scan:
 # python scripts/produce-protobuf.py --broker localhost:9092 --count 30 --with-discount
 
@@ -319,7 +348,7 @@ FROM iceberg_scan('$ORDERS_TABLE');
 "
 ```
 
-This session ended schema evolution at **580 total / 30 with** `discount_code` **/ 550 NULL**.
+After `--count 200` then `--count 50 --with-discount`, expect roughly 250 orders with some non-null `discount_code` once metadata catches up. Older illustrative session numbers (e.g. 400/400/400 or 580/30/550) came from multi-batch runs — treat them as examples, not guarantees for a clean run.
 
 ## Produce protobuf events
 
@@ -329,21 +358,21 @@ With the playground running and the venv activated:
 
 ```bash
 source .venv/bin/activate
-python scripts/produce-protobuf.py --broker localhost:9092 --count 200 --with-discount
+python scripts/produce-protobuf.py --broker localhost:9092 --count 200
 ```
 
 Expected success output:
 
 ```
   clickstream:            200 events sent
-  orders:                 200 events sent (with discount_code)
+  orders:                 200 events sent
   inventory_updates:      200 events sent
 Done. Total: 600 protobuf messages produced.
 ```
 
 You may also see a librdkafka telemetry log line (`GETSUBSCRIPTIONS`). That is harmless.
 
-`--with-discount` sets protobuf field 9 on orders. Before schema evolution, Tableflow config does not include that field (`dlq_mode: skip`), so early orders land in Iceberg without `discount_code`. After evolution, new rows get values and old rows stay `NULL`. That is the demo.
+Default first produce omits `--with-discount`. After you run `evolve-schema.sh`, produce again with `--with-discount` so new orders include protobuf field 9. Before evolution, Tableflow config does not map that field (`dlq_mode: skip`), so early orders land in Iceberg without `discount_code`. After evolution, new rows get values and old rows stay `NULL`. That is the demo.
 
 Optional continuous produce (not required; we mostly used one-shot batches):
 
@@ -403,6 +432,7 @@ ORDERS_TABLE=$(ls -d /tmp/warpstream-tableflow-iceberg/warpstream/_tableflow/eco
 INVENTORY_TABLE=$(ls -d /tmp/warpstream-tableflow-iceberg/warpstream/_tableflow/ecommerce_kafka__inventory_updates-*)
 
 find /tmp/warpstream-tableflow-iceberg -name "*.parquet" | wc -l
+export PATH="$HOME/.duckdb/cli/latest:$PATH"
 duckdb -c "SELECT * FROM read_parquet('$ORDERS_TABLE/data/*.parquet') LIMIT 5;"
 find /tmp/warpstream-tableflow-iceberg -name "v*.metadata.json"
 ```
@@ -417,10 +447,13 @@ This session wrote tables under `/tmp/warpstream-tableflow-iceberg/warpstream/_t
 
 ## Query Iceberg tables with DuckDB
 
-Once metadata exists, set the table path variables (from above) and run:
+Once metadata exists, set the table path variables (from above) and run. If `duckdb` is not found in this shell:
 
 ```bash
 export PATH="$HOME/.duckdb/cli/latest:$PATH"
+```
+
+```bash
 # CLICKS_TABLE / ORDERS_TABLE / INVENTORY_TABLE already set
 
 duckdb -c "
@@ -431,21 +464,24 @@ UNION ALL SELECT 'inventory', COUNT(*) FROM iceberg_scan('$INVENTORY_TABLE');
 "
 ```
 
-Expected shape (counts grow as you keep producing):
+Expected shape after the first `--count 200` seed (counts grow as you keep producing):
 
 ```
 ┌─────────────┬───────┐
 │     tbl     │ rows  │
 ├─────────────┼───────┤
-│ clickstream │   400 │
-│ orders      │   400 │
-│ inventory   │   400 │
+│ clickstream │   200 │
+│ orders      │   200 │
+│ inventory   │   200 │
 └─────────────┴───────┘
 ```
+
+(Older docs sometimes showed 400/400/400 from a prior multi-batch session — illustrative only.)
 
 Revenue by payment method:
 
 ```bash
+export PATH="$HOME/.duckdb/cli/latest:$PATH"
 duckdb -c "
 LOAD iceberg;
 SELECT payment_method, COUNT(*) AS order_count,
@@ -457,7 +493,7 @@ ORDER BY total_revenue DESC;
 "
 ```
 
-Example result:
+Example result (numbers vary by seed):
 
 ```
 ┌────────────────┬─────────────┬───────────────┬─────────────────┐
@@ -470,13 +506,13 @@ Example result:
 └────────────────┴─────────────┴───────────────┴─────────────────┘
 ```
 
-More queries (attribution join, inventory snapshot, unified customer view) live in `scripts/queries.sql`. Paths there are hardcoded to this session's table UUIDs. Refresh them with:
+More queries (attribution join, inventory snapshot, unified customer view) live in `scripts/queries.sql`. After tables exist, refresh the hardcoded paths:
 
 ```bash
-ls /tmp/warpstream-tableflow-iceberg/warpstream/_tableflow/
+./scripts/render-queries.sh
 ```
 
-Then paste into an interactive `duckdb` session after `LOAD iceberg;`, or edit the paths in `queries.sql`.
+Then paste into an interactive `duckdb` session after `LOAD iceberg;`, or open the regenerated `scripts/queries.sql`.
 
 ## Schema evolution: add `discount_code`
 
@@ -495,15 +531,16 @@ Then produce events that include the new field:
 python scripts/produce-protobuf.py --broker localhost:9092 --count 50 --with-discount
 ```
 
-What happened in this session:
+What to expect:
 
-1. New Parquet files showed `discount_code` within seconds (`DESCRIBE SELECT * FROM read_parquet(...)`).
-2. `iceberg_scan` still showed all-NULL for a while. Iceberg metadata lagged Parquet.
-3. We produced another `--count 30` batch and polled `version-hint.text` / `v*.metadata.json` every ~20s until non-nulls appeared (~1-2+ minutes after the new Parquet).
+1. New Parquet files show `discount_code` within seconds (`DESCRIBE SELECT * FROM read_parquet(...)`).
+2. `iceberg_scan` may still show all-NULL for a while — Iceberg metadata lags Parquet.
+3. If needed, produce another `--count 30 --with-discount` batch and poll `version-hint.text` / `v*.metadata.json` every ~20s until non-nulls appear (~1-2+ minutes after the new Parquet).
 
 Poll helper:
 
 ```bash
+export PATH="$HOME/.duckdb/cli/latest:$PATH"
 ORDERS_TABLE=$(ls -d /tmp/warpstream-tableflow-iceberg/warpstream/_tableflow/ecommerce_kafka__orders-*)
 cat "$ORDERS_TABLE/metadata/version-hint.text"
 ls -lt "$ORDERS_TABLE/metadata" | head
@@ -518,19 +555,12 @@ FROM iceberg_scan('$ORDERS_TABLE');
 "
 ```
 
-Final counts from this session:
-
-```
-┌──────────────┬───────────────┬───────────────┐
-│ total_orders │ with_discount │ null_discount │
-├──────────────┼───────────────┼───────────────┤
-│          580 │            30 │           550 │
-└──────────────┴───────────────┴───────────────┘
-```
+On a clean run (`200` without discount + `50` with), expect something like ~250 total orders with a non-zero `with_discount` once metadata catches up. A prior multi-batch session landed at 580 / 30 / 550 — illustrative only, not a target.
 
 Older rows stay `NULL`; newer rows have values:
 
 ```bash
+export PATH="$HOME/.duckdb/cli/latest:$PATH"
 duckdb -c "
 LOAD iceberg;
 SELECT order_id, customer_id, total_amount, discount_code
