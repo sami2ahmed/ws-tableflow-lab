@@ -334,8 +334,8 @@ UNION ALL SELECT 'inventory', COUNT(*) FROM iceberg_scan('$INVENTORY_TABLE');
 # 5) Evolve orders schema (adds discount_code = 9), then produce WITH discount
 ./scripts/evolve-schema.sh
 python scripts/produce-protobuf.py --broker localhost:9092 --count 50 --with-discount
-# Column can appear in iceberg_scan while with_discount is still 0.
-# Non-null values often take ~3–8 minutes on playground (sometimes longer).
+# Staged lag is expected: Parquet → column in iceberg_scan (often still all NULL) → non-nulls (~3–8 min).
+# poll-discount.sh waits for with_discount > 0 (and may produce +30 if still NULL).
 ./scripts/poll-discount.sh
 ```
 
@@ -524,9 +524,13 @@ python scripts/produce-protobuf.py --broker localhost:9092 --count 50 --with-dis
 
 What to expect (playground timing from a clean run):
 
+Discount landing is **staged** — do not treat “column exists but `with_discount` is 0” as a failure:
+
 1. **Parquet** usually shows `discount_code` within **seconds** (`DESCRIBE SELECT * FROM read_parquet(...)`).
 2. **`iceberg_scan` schema** may add the column in about **1–2 minutes**, while `with_discount` is still **0** (all NULL). That is normal — the column landing ≠ non-null values landing.
-3. **Non-null `discount_code` values** in `iceberg_scan` often take about **3–8 minutes** after the `--with-discount` produce (sometimes longer on a busy playground). If it stays all NULL past ~4 minutes, an extra `--count 30 --with-discount` batch helps; `poll-discount.sh` does that automatically around attempt 12.
+3. **Non-null `discount_code` values** in `iceberg_scan` often take about **3–8 minutes** after the `--with-discount` produce (sometimes longer on a busy playground). If it stays all NULL past ~4 minutes, an extra `--count 30 --with-discount` batch helps.
+
+**Why `scripts/poll-discount.sh` exists:** it waits for stage 3 for you. It prints `version-hint` + counts every ~20s until `with_discount > 0`, and around attempt 12 it kicks the optional `+30` produce if values are still all NULL. Use it instead of re-running DuckDB by hand and assuming the lab is stuck when the column appears with zeros.
 
 Poll with the helper (preferred):
 
