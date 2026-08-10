@@ -145,9 +145,8 @@ duckdb -c "INSTALL iceberg; LOAD iceberg;"
 
 For remote Iceberg / S3 access, also install `httpfs`:
 
-```sql
-INSTALL httpfs;
-LOAD httpfs;
+```bash
+duckdb -c "INSTALL httpfs; LOAD httpfs;"
 ```
 
 
