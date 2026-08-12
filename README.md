@@ -305,13 +305,6 @@ control + c
 
 
 
-## Key takeaways
-
-- **One config, multiple topics**: a single Tableflow YAML replaces separate Kafka Connect + S3 sink + Spark compaction pipelines per topic
-- **Protobuf-native**: raw protobuf wire format works without a schema registry; inline `input_schema` maps proto fields to Iceberg columns
-- **Schema evolution without pipeline downtime**: added fields via the Pipeline API; old rows return `null` for new columns
-- **Zero operational overhead**: compaction, snapshot cleanup, orphan file cleanup, and retention run in the background
-
 ## Some notes on the demo
 
 You might notice that the `poll-discount.sh` takes a while to complete. This is because Parquet files appear within seconds and the Iceberg metadata (`v*.metadata.json`) takes longer. 
@@ -319,12 +312,3 @@ You might notice that the `poll-discount.sh` takes a while to complete. This is 
 **Parquet** is the data layer. Once Tableflow reads Kafka and flushes a batch, it writes `.parquet` under the table’s `data/` dir. That shows up on disk quickly (often seconds). 
 
 `v*.metadata.json` is the Iceberg catalog/snapshot layer. Analytical engines like DuckDB, Snow, Athena etc.`iceberg_scan` do not discover Parquet files by scanning the folder — they read Iceberg metadata (metadata JSON → manifests → data files), and that metadata is only written when Tableflow **commits a snapshot.** 
-
-## References
-
-- [Tableflow GA Announcement](https://www.warpstream.com/blog/warpstream-tableflow-is-now-generally-available)
-- [Tableflow Configuration Docs](https://docs.warpstream.com/warpstream/tableflow/tableflow)
-- [Query Engine & Catalog Integrations](https://docs.warpstream.com/warpstream/tableflow/catalogs-and-query-engines)
-- [Iceberg REST Catalog](https://docs.warpstream.com/warpstream/tableflow/iceberg-catalog)
-- [Protobuf with Schema Registry and Tableflow](https://www.warpstream.com/blog/going-all-in-on-protobuf-with-schema-registry-and-tableflow)
-

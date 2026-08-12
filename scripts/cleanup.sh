@@ -1,5 +1,17 @@
 #!/usr/bin/env bash
-# Pause pipeline, delete Tableflow tables, delete pipeline, remove local Iceberg output.
+# Lab cleanup for WarpStream Tableflow playground.
+#
+# Playground / demo accounts cannot delete tables (demo_not_allowed), which also
+# blocks pipeline delete (cannot_delete_tableflow_pipeline_with_tables). Do not
+# attempt those APIs here — they only add noise.
+#
+# This script:
+#   1) pauses the pipeline
+#   2) removes local Iceberg output
+#   3) clears PIPELINE_ID / CONFIG_ID / VIRTUAL_CLUSTER_ID / API_KEY in .env
+#
+# Enough for this lab: pause + local rm + Ctrl+C playground.
+# Cloud-side tables/pipeline go away when the playground cluster expires.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,7 +35,7 @@ if [[ -z "${PIPELINE_ID:-}" ]]; then
 fi
 
 if [[ -z "${PIPELINE_ID}" || "${PIPELINE_ID}" == "null" ]]; then
-  echo "No data_lake pipeline found; nothing to delete."
+  echo "No data_lake pipeline found; skipping pause."
 else
   echo "Pausing pipeline $PIPELINE_ID..."
   curl -s -X POST "${BASE_URL}/api/v1/change_pipeline_state" \
@@ -35,33 +47,9 @@ else
       \"desired_state\":\"paused\"
     }" | jq .
 
-  echo "Listing tables..."
-  TABLES=$(curl -s -X POST "${BASE_URL}/api/v1/dl/list_tables" \
-    -H "Content-Type: application/json" \
-    -H "warpstream-api-key: ${API_KEY}" \
-    -d "{\"virtual_cluster_id\":\"${VIRTUAL_CLUSTER_ID}\"}")
-  echo "$TABLES" | jq .
-
-  echo "$TABLES" | jq -r '.tables[]?.table_uuid // empty' | while read -r TABLE_UUID; do
-    [[ -z "$TABLE_UUID" ]] && continue
-    echo "Deleting table $TABLE_UUID..."
-    curl -s -X POST "${BASE_URL}/api/v1/dl/delete_table" \
-      -H "Content-Type: application/json" \
-      -H "warpstream-api-key: ${API_KEY}" \
-      -d "{
-        \"virtual_cluster_id\":\"${VIRTUAL_CLUSTER_ID}\",
-        \"table_uuid\":\"${TABLE_UUID}\"
-      }" | jq .
-  done
-
-  echo "Deleting pipeline $PIPELINE_ID..."
-  curl -s -X POST "${BASE_URL}/api/v1/delete_pipeline" \
-    -H "Content-Type: application/json" \
-    -H "warpstream-api-key: ${API_KEY}" \
-    -d "{
-      \"virtual_cluster_id\":\"${VIRTUAL_CLUSTER_ID}\",
-      \"pipeline_id\":\"${PIPELINE_ID}\"
-    }" | jq .
+  echo "Skipping table/pipeline delete: not allowed on WarpStream playground"
+  echo "(demo_not_allowed / cannot_delete_tableflow_pipeline_with_tables)."
+  echo "Playground clusters expire on their own; pause + local wipe is enough."
 fi
 
 echo "Removing local Iceberg output..."
@@ -74,7 +62,7 @@ from pathlib import Path
 path = Path(os.environ["ENV_FILE"])
 if not path.exists():
     raise SystemExit(0)
-vals = {"PIPELINE_ID", "CONFIG_ID"}
+vals = {"PIPELINE_ID", "CONFIG_ID", "VIRTUAL_CLUSTER_ID", "API_KEY"}
 lines = []
 seen = set()
 for line in path.read_text().splitlines():
@@ -88,7 +76,7 @@ for key in vals:
     if key not in seen:
         lines.append(f"{key}=")
 path.write_text("\n".join(lines) + "\n")
-print("Cleared PIPELINE_ID and CONFIG_ID in .env")
+print("Cleared PIPELINE_ID, CONFIG_ID, VIRTUAL_CLUSTER_ID, and API_KEY in .env")
 PY
 
-echo "Cleanup complete."
+echo "Cleanup complete (paused + local wipe). Ctrl+C warpstream playground when done."
