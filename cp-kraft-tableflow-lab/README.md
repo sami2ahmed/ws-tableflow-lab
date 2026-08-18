@@ -132,6 +132,8 @@ The producer creates these topics through Kafka auto-topic creation:
 - `orders`
 - `inventory_updates`
 
+![cp-tableflow-agent](cp-tableflow-agent.png)
+
 The Tableflow configuration must keep the source-cluster connection separate from the destination and table definitions. `destination_bucket_url` and `tables` are top-level fields; do not indent them beneath the `source_clusters` item:
 
 ```yaml
@@ -208,6 +210,8 @@ LIMIT 10;
 
 The exact table directory names include a Tableflow-generated suffix. The supplied scripts resolve those directories and try their `metadata/*.json` files newest-first, falling back to an older complete snapshot when a newer metadata file references a data file that is not present yet. They invoke `duckdb/duckdb:latest` with the local bucket mounted at both `/iceberg` and `/tmp/tableflow-iceberg`.
 
+![iceberg-query-duckdb](iceberg-query-duckdb.png)
+
 ## 8. Evolve the orders schema
 
 Pause the existing pipeline, deploy a new inline schema containing optional `discount_code`, and resume ingestion:
@@ -246,6 +250,8 @@ The scripts use these Pipeline API operations:
 - `change_pipeline_state`
 
 The latest pipeline and configuration IDs are written back to `.env`.
+
+![iceberg-schema-update-query-duckdb](iceberg-schema-update-query-duckdb.png)
 
 ## 10. Troubleshooting
 
