@@ -1,0 +1,71 @@
+services:
+  cp-server:
+    image: confluentinc/cp-server:latest
+    hostname: cp-server
+    container_name: cp-server
+    ports:
+      - "9090:9090"
+      - "19090:19090"
+    environment:
+      KAFKA_NODE_ID: 0
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "0@cp-server:9093"
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:9090,EXTERNAL://0.0.0.0:19090,CONTROLLER://cp-server:9093"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://cp-server:9090,EXTERNAL://localhost:19090"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      CLUSTER_ID: "MkUtXwzBR9mJHj3b2pXGgYQ"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
+      KAFKA_SUPER_USERS: "User:ANONYMOUS"
+    volumes:
+      - cp-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server cp-server:9090 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  warpstream-agent:
+    image: public.ecr.aws/warpstream-labs/warpstream_agent:latest
+    hostname: warpstream-agent
+    container_name: warpstream-agent
+    depends_on:
+      cp-server:
+        condition: service_healthy
+    command:
+      - agent
+      - -bucketURL
+      - ${WARPSTREAM_BUCKET_URL:-file:///tmp/tableflow-iceberg}
+      - -agentKey
+      - ${WARPSTREAM_AGENT_KEY:?set WARPSTREAM_AGENT_KEY in .env}
+      - -defaultVirtualClusterID
+      - ${WARPSTREAM_DEFAULT_VIRTUAL_CLUSTER_ID:?set WARPSTREAM_DEFAULT_VIRTUAL_CLUSTER_ID in .env}
+      - -region
+      - ${WARPSTREAM_REGION:-ap-southeast-1}
+      - -enableKafka
+      - "false"
+      - -httpPort
+      - "8080"
+    ports:
+      - "8080:8080"
+    environment:
+      WARPSTREAM_BUCKET_URL: ${WARPSTREAM_BUCKET_URL:-file:///tmp/tableflow-iceberg}
+      WARPSTREAM_AGENT_KEY: ${WARPSTREAM_AGENT_KEY:?set WARPSTREAM_AGENT_KEY in .env}
+      WARPSTREAM_DEFAULT_VIRTUAL_CLUSTER_ID: ${WARPSTREAM_DEFAULT_VIRTUAL_CLUSTER_ID:?set WARPSTREAM_DEFAULT_VIRTUAL_CLUSTER_ID in .env}
+      WARPSTREAM_REGION: ${WARPSTREAM_REGION:-ap-southeast-1}
+      WARPSTREAM_ADVERTISE_HOSTNAME_STRATEGY: local
+      TMPDIR: /tmp/tableflow-iceberg/.tmp
+    volumes:
+      - ./iceberg:/tmp/tableflow-iceberg
+
+volumes:
+  cp-data:
