@@ -182,26 +182,6 @@ Rerun:
 
 ## 7. Run analytical queries
 
-Run the compact row-count query:
-
-```bash
-./scripts/query.sh
-```
-
-Run the retail queries:
-
-```bash
-./scripts/query-retail.sh
-```
-
-Both query scripts run DuckDB as a one-shot container with the host `./iceberg` directory mounted read-only at both `/iceberg` and `/tmp/tableflow-iceberg`. The second mount is required because local Tableflow metadata can contain absolute `file://` paths rooted at `/tmp/tableflow-iceberg`. For each table, the scripts try metadata JSON files newest-first and select the newest snapshot DuckDB can actually open, because Tableflow can publish metadata before all referenced `data/*.parquet` files are visible. They then pass that metadata file explicitly to DuckDB's `iceberg_scan`, avoiding Iceberg version-hint guessing. The scripts continue retrying while a complete snapshot is being published. If every metadata candidate references a file that is absent from the host bucket, this is not a DuckDB query problem; the local Tableflow object-store state is inconsistent and must be recovered with a fresh Tableflow VCI. Configure the retry window when needed:
-
-```bash
-ICEBERG_QUERY_ATTEMPTS=60 ICEBERG_QUERY_INTERVAL_SECS=5 ./scripts/query-retail.sh
-```
-
-If the retry window expires with a missing Avro or Parquet data file, the local snapshot is incomplete; follow the recovery procedure in the troubleshooting section rather than repeatedly querying the same snapshot.
-
 Open an interactive DuckDB shell using the host `./iceberg` directory:
 
 ```bash
