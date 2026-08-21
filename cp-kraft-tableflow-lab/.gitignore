@@ -1,0 +1,40 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+iceberg/
+queries/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# DuckDB
+*.duckdb
+*.duckdb.wal
+
+# Workshop export (source of truth lives in Google Docs)
+WarpStream Tableflow Workshop.md
+
+# Agent handoff / session memory (local only)
+SESSION_MEMORY.md
+.session-memory.md
+.agent-memory/
+
+# other
+README.local.md
